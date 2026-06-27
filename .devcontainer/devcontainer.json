@@ -1,0 +1,12 @@
+{
+  "name": "duty-schedule",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements.txt",
+  "forwardPorts": [8090],
+  "portsAttributes": {
+    "8090": {
+      "label": "duty-schedule",
+      "onAutoForward": "notify"
+    }
+  }
+}
