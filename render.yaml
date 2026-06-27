@@ -1,0 +1,18 @@
+# Render.com 배포 설정 (무료 웹서비스)
+# 사용법: render.com → New → Blueprint → 이 저장소 선택 → Apply
+services:
+  - type: web
+    name: duty-schedule
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+      # 관리 비밀번호 — 배포 시 직접 입력(공개 노출 방지)
+      - key: ADMIN_PASSWORD
+        sync: false
+      # 세션 쿠키 서명키 — 자동 랜덤 생성
+      - key: ADMIN_SECRET
+        generateValue: true
