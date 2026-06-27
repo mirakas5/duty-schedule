@@ -1,0 +1,35 @@
+# 비밀정보 / 환경
+.env
+*.env
+!.env.example
+
+# 데이터(운영 DB) — 개인정보 포함, 커밋 금지
+data/duty.sqlite
+data/*.sqlite
+
+# 엑셀 명단 — 실명(개인정보) 보호. 가짜 샘플만 예외로 커밋
+data/*.xlsx
+!data/sample_members.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 폐쇄망 배포용 오프라인 휠(용량 큼, 플랫폼별 생성)
+deploy/windows/wheels/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# 테스트/캐시
+.pytest_cache/
+.coverage
+htmlcov/
+
+# bkit 상태(로컬)
+.bkit/

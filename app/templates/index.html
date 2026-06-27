@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NEXTRADE IT전략본부 당직표</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>NEXTRADE IT전략본부 당직표</h1>
+    <nav class="tabs">
+      <button class="tab active" data-tab="schedule">당직 달력</button>
+      <button class="tab" data-tab="stats">통계</button>
+      <button class="tab" data-tab="admin">관리</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 당직 달력 -->
+    <section id="tab-schedule" class="tab-panel active">
+      <div class="toolbar">
+        <div class="cal-nav">
+          <button id="cal-prev" class="btn">◀</button>
+          <span id="cal-title">—</span>
+          <button id="cal-next" class="btn">▶</button>
+          <button id="cal-today" class="btn">오늘</button>
+        </div>
+        <span class="hint">🌅새벽 / 🌙야간 · 셀 <b>드래그</b>=교환 · <b>우클릭</b>=수정/삭제</span>
+        <button id="btn-export" class="btn">엑셀 내보내기</button>
+      </div>
+      <div id="schedule-empty" class="empty hidden">아직 생성된 당직표가 없습니다. [관리] 탭에서 명단 업로드 후 생성하세요.</div>
+      <div id="calendar" class="calendar"></div>
+    </section>
+
+    <!-- 통계 -->
+    <section id="tab-stats" class="tab-panel">
+      <div id="stats-summary" class="summary"></div>
+      <div id="stats-table-wrap" class="table-wrap"></div>
+    </section>
+
+    <!-- 관리 (비밀번호+IP 게이트) -->
+    <section id="tab-admin" class="tab-panel">
+      <div id="admin-gate" class="card admin-gate hidden">
+        <h2>🔒 관리자 인증</h2>
+        <p id="admin-gate-msg" class="hint">관리 기능을 사용하려면 비밀번호를 입력하세요.</p>
+        <div class="form-row">
+          <input type="password" id="admin-pw" placeholder="관리자 비밀번호" />
+          <button id="btn-admin-login" class="btn btn-primary">로그인</button>
+        </div>
+        <div id="admin-login-msg" class="msg"></div>
+      </div>
+
+      <div id="admin-content" class="hidden">
+        <div class="toolbar">
+          <span class="hint">🔓 관리자 모드 — 명단·공휴일·스케줄 생성 가능</span>
+          <button id="btn-admin-logout" class="btn">관리 로그아웃</button>
+        </div>
+        <div class="admin-grid">
+        <div class="card">
+          <h2>1. 명단</h2>
+          <input type="file" id="member-file" accept=".xlsx" />
+          <button id="btn-upload" class="btn">엑셀 업로드</button>
+          <div id="upload-result" class="msg"></div>
+          <div id="member-list" class="member-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>2. 공휴일 (수동 지정)</h2>
+          <div class="form-row">
+            <input type="date" id="holiday-date" />
+            <input type="text" id="holiday-name" placeholder="명칭(예: 광복절)" />
+            <select id="holiday-type">
+              <option value="national">국가공휴일</option>
+              <option value="temporary">임시공휴일</option>
+              <option value="company">회사지정</option>
+            </select>
+            <button id="btn-add-holiday" class="btn">추가</button>
+          </div>
+          <div class="hint">공휴일이 낀 주는 그 주 당직자가 나머지 평일만 근무합니다.</div>
+          <div id="holiday-list" class="holiday-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>3. 스케줄 생성</h2>
+          <div class="form-row">
+            <label>시작일 <input type="date" id="gen-start" /></label>
+            <label>종료일 <input type="date" id="gen-end" /></label>
+          </div>
+          <div class="form-row">
+            <label>총량 가중치 <input type="number" id="gen-wt" value="1.0" step="0.1" min="0" /></label>
+            <label>간격 가중치 <input type="number" id="gen-wg" value="1.0" step="0.1" min="0" /></label>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="gen-reset" /> 전체 초기화 후 생성 (체크 해제 시 기존 이력을 이어받아 형평성 유지)</label>
+          </div>
+          <button id="btn-generate" class="btn btn-primary">자동 생성</button>
+          <div id="gen-result" class="msg"></div>
+          <div class="hint">종료일을 비우면 시작일부터 1년. 이력을 이어받아 생성하면 과거 횟수·간격을 반영합니다.</div>
+        </div>
+      </div>
+      </div><!-- /admin-content -->
+    </section>
+  </main>
+
+  <!-- 우클릭 컨텍스트 메뉴 -->
+  <div id="context-menu" class="context-menu hidden">
+    <button data-action="edit">수정</button>
+    <button data-action="delete">삭제</button>
+  </div>
+
+  <!-- 수정 모달 -->
+  <div id="edit-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>담당자 수정</h3>
+      <select id="edit-select"></select>
+      <div class="modal-actions">
+        <button id="edit-cancel" class="btn">취소</button>
+        <button id="edit-save" class="btn btn-primary">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/schedule.js"></script>
+  <script src="/static/js/stats.js"></script>
+  <script src="/static/js/admin.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
