@@ -13,16 +13,11 @@
 - 인원별 통계(횟수·간격), 엑셀 내보내기
 - 외부 네트워크 호출 0건(폐쇄망)
 
-## 배포 (폐쇄망 Windows 서버)
+## 배포
 
-처음 배포하는 경우 단계별 가이드를 따라가세요:
-**[deploy/windows/DEPLOY_WINDOWS.md](deploy/windows/DEPLOY_WINDOWS.md)**
-
-요약:
-1. 인터넷 되는 Windows PC에서 `deploy/windows/1_download_wheels.bat` 실행 → `wheels/` 생성
-2. 프로젝트 폴더 + `wheels` + Python 설치파일을 USB로 서버에 반입
-3. 서버에서 Python 설치 → `2_install_offline.bat` → `4_open_firewall.bat`(관리자) → `3_run_server.bat`
-4. 직원에게 `http://<서버IP>:8080` 안내
+환경별 단계별 가이드: **[deploy/README.md](deploy/README.md)**
+- **폐쇄망 Windows PC** → [deploy/windows/DEPLOY_WINDOWS.md](deploy/windows/DEPLOY_WINDOWS.md) (USB 반입 + `.bat`)
+- **Linux 서버** (온라인/폐쇄망) → [deploy/linux/DEPLOY_LINUX.md](deploy/linux/DEPLOY_LINUX.md) (venv + systemd 자동 구동)
 
 ## 설치 (개발/Mac·Linux)
 
