@@ -1,27 +1,26 @@
-// 당직 달력 — 월간 캘린더 렌더 + 드래그앤드롭 교환(FR-09) + 우클릭 수정/삭제(FR-10)
+// 당직 달력 — 월간 렌더 + 드래그앤드롭 교환(일 단위) + 클릭/우클릭 수정·삭제
 const Schedule = {
-  weeks: [],
+  days: [],
   activeMembers: [],
-  dateMap: {},      // "YYYY-MM-DD" → week 객체
+  dateMap: {},      // "YYYY-MM-DD" → day 객체
   holidayMap: {},   // "YYYY-MM-DD" → 공휴일명
-  cur: null,        // {y, m}  (m: 0~11)
+  cur: null,        // {y, m}
   dragSrc: null,
   ctx: null,
 
   async load() {
-    [this.weeks, this.activeMembers, this.holidays] = await Promise.all([
+    [this.days, this.activeMembers, this.holidays] = await Promise.all([
       API.get("/api/schedule"),
       API.get("/api/members?active_only=true"),
       API.get("/api/holidays"),
     ]);
     this.dateMap = {};
-    this.weeks.forEach((w) => w.workdays.forEach((d) => { this.dateMap[d] = w; }));
+    this.days.forEach((d) => { this.dateMap[d.date] = d; });
     this.holidayMap = {};
     this.holidays.forEach((h) => { this.holidayMap[h.date] = h.name || "공휴일"; });
 
     if (!this.cur) {
-      // 데이터가 있으면 첫 근무 월, 없으면 이번 달
-      const base = this.weeks.length ? this.weeks[0].workdays[0] : new Date().toISOString().slice(0, 10);
+      const base = this.days.length ? this.days[0].date : new Date().toISOString().slice(0, 10);
       const [y, m] = base.split("-");
       this.cur = { y: Number(y), m: Number(m) - 1 };
     }
@@ -50,7 +49,7 @@ const Schedule = {
     const cal = document.getElementById("calendar");
     document.getElementById("cal-title").textContent = `${this.cur.y}년 ${this.cur.m + 1}월`;
 
-    if (!this.weeks.length) {
+    if (!this.days.length) {
       cal.innerHTML = "";
       empty.classList.remove("hidden");
       return;
@@ -59,12 +58,11 @@ const Schedule = {
 
     const { y, m } = this.cur;
     const todayStr = new Date().toISOString().slice(0, 10);
-    const firstDow = new Date(y, m, 1).getDay();       // 0=일
+    const firstDow = new Date(y, m, 1).getDay();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     const dow = ["일", "월", "화", "수", "목", "금", "토"];
 
     let cells = dow.map((d, i) => `<div class="cal-head ${i === 0 ? "sun" : ""} ${i === 6 ? "sat" : ""}">${d}</div>`).join("");
-
     for (let i = 0; i < firstDow; i++) cells += `<div class="cal-cell empty-cell"></div>`;
 
     for (let day = 1; day <= daysInMonth; day++) {
@@ -72,14 +70,14 @@ const Schedule = {
       const dowIdx = new Date(y, m, day).getDay();
       const isWeekend = dowIdx === 0 || dowIdx === 6;
       const holiday = this.holidayMap[ds];
-      const week = this.dateMap[ds];
+      const dayObj = this.dateMap[ds];
       const todayCls = ds === todayStr ? "today" : "";
 
       let inner = `<div class="cal-date">${day}</div>`;
       if (holiday) {
         inner += `<div class="cal-holiday">${holiday}</div>`;
-      } else if (week) {
-        inner += this.chip(week, "dawn") + this.chip(week, "night");
+      } else if (dayObj) {
+        inner += this.chip(dayObj, "dawn") + this.chip(dayObj, "night");
       }
       const cls = `cal-cell ${todayCls} ${isWeekend ? "weekend" : ""} ${holiday ? "holiday" : ""}`;
       cells += `<div class="${cls}">${inner}</div>`;
@@ -89,24 +87,25 @@ const Schedule = {
     cal.querySelectorAll(".chip").forEach((el) => this.bindCell(el));
   },
 
-  chip(w, slot) {
-    const c = w[slot];
+  chip(d, slot) {
+    const c = d[slot];
     const name = c.member_name || "공석";
     const cls = "chip " + slot + (c.member_name ? "" : " empty-slot");
     const icon = slot === "dawn" ? "🌅" : "🌙";
     return `<span class="${cls}" draggable="true"
-      data-week-id="${w.id}" data-slot="${slot}"
+      data-day-id="${d.id}" data-slot="${slot}"
       data-member-id="${c.member_id == null ? "" : c.member_id}"
-      data-version="${w.version}" title="${slot === "dawn" ? "새벽근무" : "야간근무"}">${icon}${name}</span>`;
+      data-version="${d.version}" title="${slot === "dawn" ? "새벽근무" : "야간근무"} · 클릭=수정/삭제, 드래그=교환">${icon}${name}</span>`;
   },
 
   bindCell(el) {
     el.addEventListener("dragstart", (e) => {
       this.dragSrc = this.read(el);
+      this._dragging = true;
       el.classList.add("dragging");
       e.dataTransfer.effectAllowed = "move";
     });
-    el.addEventListener("dragend", () => el.classList.remove("dragging"));
+    el.addEventListener("dragend", () => { el.classList.remove("dragging"); setTimeout(() => { this._dragging = false; }, 50); });
     el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drag-over"); });
     el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
     el.addEventListener("drop", (e) => {
@@ -114,6 +113,14 @@ const Schedule = {
       el.classList.remove("drag-over");
       this.onDrop(this.read(el));
     });
+    // 클릭으로 메뉴 열기(우클릭이 막히는 환경 대비). 드래그 직후 클릭은 무시.
+    el.addEventListener("click", (e) => {
+      if (this._dragging) return;
+      e.stopPropagation();
+      this.ctx = this.read(el);
+      ContextMenu.show(e.clientX, e.clientY);
+    });
+    // 우클릭도 유지
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       this.ctx = this.read(el);
@@ -123,7 +130,7 @@ const Schedule = {
 
   read(el) {
     return {
-      weekId: Number(el.dataset.weekId),
+      dayId: Number(el.dataset.dayId),
       slot: el.dataset.slot,
       memberId: el.dataset.memberId === "" ? null : Number(el.dataset.memberId),
       version: Number(el.dataset.version),
@@ -134,11 +141,11 @@ const Schedule = {
     const src = this.dragSrc;
     this.dragSrc = null;
     if (!src) return;
-    if (src.weekId === target.weekId && src.slot === target.slot) return;
+    if (src.dayId === target.dayId && src.slot === target.slot) return;
     try {
       await API.post("/api/schedule/swap", {
-        a_week_id: src.weekId, a_slot: src.slot,
-        b_week_id: target.weekId, b_slot: target.slot,
+        a_day_id: src.dayId, a_slot: src.slot,
+        b_day_id: target.dayId, b_slot: target.slot,
         a_version: src.version, b_version: target.version,
       });
       toast("교환 완료");
@@ -152,7 +159,7 @@ const Schedule = {
   async deleteCell() {
     const c = this.ctx;
     try {
-      await API.patch(`/api/schedule/week/${c.weekId}`, { slot: c.slot, member_id: null, version: c.version });
+      await API.patch(`/api/schedule/day/${c.dayId}`, { slot: c.slot, member_id: null, version: c.version });
       toast("삭제(공석) 완료");
       await this.load();
     } catch (err) {
@@ -164,7 +171,7 @@ const Schedule = {
   async saveEdit(memberId) {
     const c = this.ctx;
     try {
-      await API.patch(`/api/schedule/week/${c.weekId}`, { slot: c.slot, member_id: memberId, version: c.version });
+      await API.patch(`/api/schedule/day/${c.dayId}`, { slot: c.slot, member_id: memberId, version: c.version });
       toast("수정 완료");
       await this.load();
     } catch (err) {

@@ -22,27 +22,26 @@ class CellOut(BaseModel):
     member_name: Optional[str] = None
 
 
-class WeekOut(BaseModel):
+class DayOut(BaseModel):
     id: int
-    week_start: date_type
+    date: date_type
     iso_year: int
     iso_week: int
-    workdays: List[date_type]
     dawn: CellOut
     night: CellOut
     version: int
 
 
-class WeekPatch(BaseModel):
+class DayPatch(BaseModel):
     slot: Slot
     member_id: Optional[int] = None  # None = 삭제(공석)
     version: int
 
 
 class SwapIn(BaseModel):
-    a_week_id: int
+    a_day_id: int
     a_slot: Slot
-    b_week_id: int
+    b_day_id: int
     b_slot: Slot
     a_version: int
     b_version: int

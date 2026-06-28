@@ -76,31 +76,31 @@ def test_full_flow():
     assert r.status_code == 201, r.text
     assert r.json()["data"]["fairness"]["total"]["diff"] <= 1
 
-    # 조회(공개)
-    weeks = client.get("/api/schedule").json()
-    assert len(weeks) >= 50
+    # 조회(공개) — 일 단위
+    days = client.get("/api/schedule").json()
+    assert len(days) >= 200  # 1년치 평일
 
-    # 드래그 교환(공개)
-    a, b = weeks[0], weeks[1]
+    # 드래그 교환(공개) — 하루 단위
+    a, b = days[0], days[10]
     r = client.post("/api/schedule/swap", json={
-        "a_week_id": a["id"], "a_slot": "dawn",
-        "b_week_id": b["id"], "b_slot": "dawn",
+        "a_day_id": a["id"], "a_slot": "dawn",
+        "b_day_id": b["id"], "b_slot": "dawn",
         "a_version": a["version"], "b_version": b["version"],
     })
     assert r.status_code == 200, r.text
 
     # version 충돌 → 409 (공개 편집)
-    r = client.patch(f"/api/schedule/week/{a['id']}", json={"slot": "night", "member_id": None, "version": 999})
+    r = client.patch(f"/api/schedule/day/{a['id']}", json={"slot": "night", "member_id": None, "version": 999})
     assert r.status_code == 409
 
-    # 우클릭 삭제(공개) → 정상
+    # 클릭 삭제(공개) → 정상
     cur = client.get("/api/schedule").json()[0]
-    r = client.patch(f"/api/schedule/week/{cur['id']}", json={"slot": "night", "member_id": None, "version": cur["version"]})
+    r = client.patch(f"/api/schedule/day/{cur['id']}", json={"slot": "night", "member_id": None, "version": cur["version"]})
     assert r.status_code == 200
 
-    # 같은 주 새벽=야간 위반 → 400
+    # 같은 날 새벽=야간 위반 → 400
     w = client.get("/api/schedule").json()[5]
-    r = client.patch(f"/api/schedule/week/{w['id']}", json={"slot": "night", "member_id": w["dawn"]["member_id"], "version": w["version"]})
+    r = client.patch(f"/api/schedule/day/{w['id']}", json={"slot": "night", "member_id": w["dawn"]["member_id"], "version": w["version"]})
     assert r.status_code == 400
 
 

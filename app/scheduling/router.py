@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import require_admin
 from app.db.session import get_db
 from app.scheduling import service
-from app.scheduling.schemas import GenerateIn, SwapIn, WeekOut, WeekPatch
+from app.scheduling.schemas import DayOut, DayPatch, GenerateIn, SwapIn
 
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
@@ -31,9 +31,9 @@ def generate(payload: GenerateIn, db: Session = Depends(get_db), _: None = Depen
     return {"data": data}
 
 
-@router.get("", response_model=list[WeekOut])
-def list_weeks(date_from: Optional[date] = None, date_to: Optional[date] = None, db: Session = Depends(get_db)):
-    return service.list_weeks(db, date_from, date_to)
+@router.get("", response_model=list[DayOut])
+def list_days(date_from: Optional[date] = None, date_to: Optional[date] = None, db: Session = Depends(get_db)):
+    return service.list_days(db, date_from, date_to)
 
 
 @router.get("/stats")
@@ -41,10 +41,10 @@ def stats(db: Session = Depends(get_db)):
     return {"data": service.stats(db)}
 
 
-@router.patch("/week/{week_id}")
-def patch_week(week_id: int, payload: WeekPatch, db: Session = Depends(get_db)):
+@router.patch("/day/{day_id}")
+def patch_day(day_id: int, payload: DayPatch, db: Session = Depends(get_db)):
     try:
-        data = service.patch_cell(db, week_id, payload.slot, payload.member_id, payload.version)
+        data = service.patch_day(db, day_id, payload.slot, payload.member_id, payload.version)
     except service.ScheduleError as e:
         _raise(e)
     return {"data": data}
@@ -54,7 +54,7 @@ def patch_week(week_id: int, payload: WeekPatch, db: Session = Depends(get_db)):
 def swap(payload: SwapIn, db: Session = Depends(get_db)):
     try:
         data = service.swap(
-            db, payload.a_week_id, payload.a_slot, payload.b_week_id, payload.b_slot,
+            db, payload.a_day_id, payload.a_slot, payload.b_day_id, payload.b_slot,
             payload.a_version, payload.b_version,
         )
     except service.ScheduleError as e:

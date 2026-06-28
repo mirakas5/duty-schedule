@@ -1,19 +1,19 @@
-"""scheduling 오케스트레이션 — 생성/조회/통계/교환/수정.
+"""scheduling 오케스트레이션 — 생성/조회/통계/교환/수정 (일 단위 저장).
 
 Design Ref: §2.2 Data Flow, §3.5 엔진 연동
-순수 엔진(engine)·캘린더(calendar)를 호출해 결과를 DB에 영속화한다.
+- 자동 생성: 주 단위 공정 배정(engine) → 그 주 평일 전체에 같은 사람을 '일 단위로' 펼쳐 저장.
+- 수동 편집(드래그/우클릭): 하루(ScheduleDay) 단위로만 변경.
 """
 from __future__ import annotations
 
 import io
-import json
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Member, SchedulePeriod, ScheduleWeek
+from app.db.models import Member, SchedulePeriod, ScheduleDay
 from app.holidays.service import holiday_dates
 from app.members.service import list_members
 from app.scheduling import calendar as cal
@@ -21,8 +21,6 @@ from app.scheduling import engine
 
 
 class ScheduleError(Exception):
-    """검증/충돌 등 도메인 에러. code로 구분."""
-
     def __init__(self, code: str, message: str, status: int = 400):
         super().__init__(message)
         self.code = code
@@ -30,7 +28,19 @@ class ScheduleError(Exception):
         self.status = status
 
 
-# ── 생성 (시작/종료일 + 과거 이력 시드) ─────────────────────────────
+def _week_ord_of(d: date) -> int:
+    """날짜가 속한 ISO 주의 월요일 기준 절대 주차 키."""
+    monday = d - timedelta(days=d.weekday())
+    return cal.week_ordinal(monday)
+
+
+def _active_period(db: Session) -> Optional[SchedulePeriod]:
+    return db.scalar(
+        select(SchedulePeriod).where(SchedulePeriod.status == "active").order_by(SchedulePeriod.id.desc())
+    )
+
+
+# ── 생성 (시작/종료일 + 과거 이력 시드, 일 단위 저장) ───────────────
 def generate(
     db: Session,
     start_date: date,
@@ -39,11 +49,6 @@ def generate(
     w_gap: float = 1.0,
     reset: bool = False,
 ) -> dict:
-    """[start_date, end_date] 구간의 당직을 생성한다.
-
-    Design Ref: FR-05/05b — reset=False(기본)이면 구간 밖의 기존 이력을 시드로 삼아
-    누적 형평성(횟수·간격)을 잇는다. 구간과 겹치는 기존 주차는 새로 교체한다.
-    """
     if end_date is None:
         end_date = cal.one_year_end(start_date)
     if end_date < start_date:
@@ -57,9 +62,8 @@ def generate(
     new_weeks = cal.build_weeks(start_date, end_date, holidays)
     if not new_weeks:
         raise ScheduleError("VALIDATION_ERROR", "생성할 평일이 없습니다", 400)
-    new_starts = {w.week_start for w in new_weeks}
+    new_dates = {d for w in new_weeks for d in w.workdays}
 
-    # reset이면 전체 초기화, 아니면 단일 active period 유지
     if reset:
         for p in db.scalars(select(SchedulePeriod)):
             db.delete(p)
@@ -71,48 +75,50 @@ def generate(
         db.add(period)
         db.flush()
 
-    # 구간과 겹치는 기존 주차는 교체(삭제), 나머지는 이력으로 보존
-    existing = list(db.scalars(select(ScheduleWeek).where(ScheduleWeek.period_id == period.id)))
+    # 구간과 겹치는 기존 일자는 교체(삭제), 나머지는 이력으로 보존
+    existing = list(db.scalars(select(ScheduleDay).where(ScheduleDay.period_id == period.id)))
     remaining = []
-    for w in existing:
-        if w.week_start in new_starts:
-            db.delete(w)
+    for d in existing:
+        if d.date in new_dates:
+            db.delete(d)
         else:
-            remaining.append(w)
+            remaining.append(d)
     db.flush()
 
-    # 보존 이력 → 엔진 시드 {member_id: (누적횟수, 마지막 주차키)}
-    initial: dict = {}
-    for w in remaining:
-        key = cal.week_ordinal(w.week_start)
-        for mid in (w.dawn_member_id, w.night_member_id):
+    # 보존 이력 → 엔진 시드(주 단위): {member_id: (배정 주수, 마지막 주차키)}
+    member_weeks: dict = {}
+    member_last: dict = {}
+    for d in remaining:
+        word = _week_ord_of(d.date)
+        for mid in (d.dawn_member_id, d.night_member_id):
             if mid is None:
                 continue
-            tot, last = initial.get(mid, (0, key))
-            initial[mid] = (tot + 1, max(last, key))
+            member_weeks.setdefault(mid, set()).add(word)
+            member_last[mid] = max(member_last.get(mid, word), word)
+    initial = {mid: (len(weeks), member_last[mid]) for mid, weeks in member_weeks.items()}
 
     eng_members = [engine.Member(id=m.id, name=m.name, sort_order=m.sort_order) for m in members]
     week_keys = [cal.week_ordinal(w.week_start) for w in new_weeks]
     assignments = engine.assign(eng_members, week_keys, w_total, w_gap, initial=initial)
 
+    # 주 단위 배정을 그 주 평일 전체에 '일 단위로' 펼쳐 저장
     for a, w in zip(assignments, new_weeks):
-        db.add(
-            ScheduleWeek(
-                period_id=period.id,
-                week_start=w.week_start,
-                iso_year=w.iso_year,
-                iso_week=w.iso_week,
-                workdays_json=json.dumps([d.isoformat() for d in w.workdays]),
-                dawn_member_id=a.dawn.id,
-                night_member_id=a.night.id,
-                version=0,
+        for d in w.workdays:
+            db.add(
+                ScheduleDay(
+                    period_id=period.id,
+                    date=d,
+                    iso_year=w.iso_year,
+                    iso_week=w.iso_week,
+                    dawn_member_id=a.dawn.id,
+                    night_member_id=a.night.id,
+                    version=0,
+                )
             )
-        )
 
-    # period 기간을 전체 주차로 확장
-    all_starts = [w.week_start for w in remaining] + list(new_starts)
-    period.start_date = min(all_starts)
-    period.end_date = max(max(w.workdays) for w in new_weeks) if not remaining else max(end_date, period.end_date)
+    all_dates = [d.date for d in remaining] + list(new_dates)
+    period.start_date = min(all_dates)
+    period.end_date = max(all_dates)
     period.weight_total = w_total
     period.weight_gap = w_gap
     db.commit()
@@ -121,99 +127,91 @@ def generate(
     return {
         "period_id": period.id,
         "generated_weeks": len(new_weeks),
-        "generated_workdays": sum(len(w.workdays) for w in new_weeks),
-        "carried_history_weeks": len(remaining),
+        "generated_days": len(new_dates),
+        "carried_history_weeks": len(set().union(*member_weeks.values())) if member_weeks else 0,
         "range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
         "fairness": {"total": cumulative["total"], "gap": cumulative["gap"]},
     }
 
 
-# ── 조회 ────────────────────────────────────────────────────────────
-def _active_period(db: Session) -> Optional[SchedulePeriod]:
-    return db.scalar(
-        select(SchedulePeriod).where(SchedulePeriod.status == "active").order_by(SchedulePeriod.id.desc())
-    )
-
-
-def list_weeks(db: Session, date_from: Optional[date] = None, date_to: Optional[date] = None) -> List[dict]:
+# ── 조회 (일 단위) ──────────────────────────────────────────────────
+def list_days(db: Session, date_from: Optional[date] = None, date_to: Optional[date] = None) -> List[dict]:
     period = _active_period(db)
     if period is None:
         return []
-    stmt = select(ScheduleWeek).where(ScheduleWeek.period_id == period.id).order_by(ScheduleWeek.week_start)
-    rows = list(db.scalars(stmt))
+    stmt = select(ScheduleDay).where(ScheduleDay.period_id == period.id)
+    if date_from:
+        stmt = stmt.where(ScheduleDay.date >= date_from)
+    if date_to:
+        stmt = stmt.where(ScheduleDay.date <= date_to)
+    rows = list(db.scalars(stmt.order_by(ScheduleDay.date)))
 
     names = {m.id: m.name for m in db.scalars(select(Member))}
-    out: List[dict] = []
-    for w in rows:
-        workdays = [date.fromisoformat(s) for s in json.loads(w.workdays_json)]
-        if date_from and date_to:
-            # 그 주의 평일이 요청 구간과 겹치는 경우만
-            if not any(date_from <= d <= date_to for d in workdays):
-                continue
-        out.append(
-            {
-                "id": w.id,
-                "week_start": w.week_start,
-                "iso_year": w.iso_year,
-                "iso_week": w.iso_week,
-                "workdays": workdays,
-                "dawn": {"member_id": w.dawn_member_id, "member_name": names.get(w.dawn_member_id)},
-                "night": {"member_id": w.night_member_id, "member_name": names.get(w.night_member_id)},
-                "version": w.version,
-            }
-        )
-    return out
+    return [
+        {
+            "id": r.id,
+            "date": r.date,
+            "iso_year": r.iso_year,
+            "iso_week": r.iso_week,
+            "dawn": {"member_id": r.dawn_member_id, "member_name": names.get(r.dawn_member_id)},
+            "night": {"member_id": r.night_member_id, "member_name": names.get(r.night_member_id)},
+            "version": r.version,
+        }
+        for r in rows
+    ]
 
 
-# ── 통계 ────────────────────────────────────────────────────────────
+# ── 통계 (공정성은 주 단위, 근무 일수도 함께) ───────────────────────
 def stats(db: Session) -> dict:
     period = _active_period(db)
+    empty = {"per_member": {}, "total": {"min": 0, "max": 0, "diff": 0}, "gap": {"mean_weeks": 0.0, "stdev": 0.0}}
     if period is None:
-        return {"per_member": {}, "total": {"min": 0, "max": 0, "diff": 0}, "gap": {"mean_weeks": 0.0, "stdev": 0.0}}
+        return empty
 
-    rows = list(
-        db.scalars(
-            select(ScheduleWeek).where(ScheduleWeek.period_id == period.id).order_by(ScheduleWeek.week_start)
-        )
-    )
+    rows = list(db.scalars(select(ScheduleDay).where(ScheduleDay.period_id == period.id).order_by(ScheduleDay.date)))
+    if not rows:
+        return empty
     names = {m.id: m.name for m in db.scalars(select(Member))}
 
-    counts: dict = {}
-    dawn: dict = {}
-    night: dict = {}
-    last_idx: dict = {}
-    gaps: List[int] = []
-
-    for idx, w in enumerate(rows):
-        for mid, slot in ((w.dawn_member_id, "dawn"), (w.night_member_id, "night")):
+    week_set: dict = {}      # mid -> set(week ord)
+    day_count: dict = {}     # mid -> 총 근무일
+    dawn_days: dict = {}
+    night_days: dict = {}
+    for r in rows:
+        word = _week_ord_of(r.date)
+        for mid, slot in ((r.dawn_member_id, "dawn"), (r.night_member_id, "night")):
             if mid is None:
                 continue
-            counts[mid] = counts.get(mid, 0) + 1
+            week_set.setdefault(mid, set()).add(word)
+            day_count[mid] = day_count.get(mid, 0) + 1
             if slot == "dawn":
-                dawn[mid] = dawn.get(mid, 0) + 1
+                dawn_days[mid] = dawn_days.get(mid, 0) + 1
             else:
-                night[mid] = night.get(mid, 0) + 1
-            if mid in last_idx:
-                gaps.append(idx - last_idx[mid])
-            last_idx[mid] = idx
+                night_days[mid] = night_days.get(mid, 0) + 1
 
-    totals = list(counts.values())
-    lo, hi = (min(totals), max(totals)) if totals else (0, 0)
+    weeks_per = {mid: len(w) for mid, w in week_set.items()}
+    vals = list(weeks_per.values())
+    lo, hi = (min(vals), max(vals)) if vals else (0, 0)
+
+    gaps: List[int] = []
+    for mid, ws in week_set.items():
+        ordered = sorted(ws)
+        gaps.extend(ordered[i] - ordered[i - 1] for i in range(1, len(ordered)))
     if gaps:
         mean = sum(gaps) / len(gaps)
-        var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
-        stdev = var ** 0.5
+        stdev = (sum((g - mean) ** 2 for g in gaps) / len(gaps)) ** 0.5
     else:
         mean = stdev = 0.0
 
     per_member = {
         mid: {
             "name": names.get(mid, f"#{mid}"),
-            "total": counts.get(mid, 0),
-            "dawn": dawn.get(mid, 0),
-            "night": night.get(mid, 0),
+            "weeks": weeks_per.get(mid, 0),
+            "days": day_count.get(mid, 0),
+            "dawn": dawn_days.get(mid, 0),
+            "night": night_days.get(mid, 0),
         }
-        for mid in counts
+        for mid in week_set
     }
     return {
         "per_member": per_member,
@@ -222,81 +220,78 @@ def stats(db: Session) -> dict:
     }
 
 
-# ── 편집: 수정/삭제 (우클릭) ────────────────────────────────────────
-def patch_cell(db: Session, week_id: int, slot: str, member_id: Optional[int], version: int) -> dict:
-    w = db.get(ScheduleWeek, week_id)
-    if w is None:
-        raise ScheduleError("NOT_FOUND", "주차 없음", 404)
-    if w.version != version:
+# ── 편집: 수정/삭제 (우클릭/클릭) — 하루 단위 ───────────────────────
+def patch_day(db: Session, day_id: int, slot: str, member_id: Optional[int], version: int) -> dict:
+    d = db.get(ScheduleDay, day_id)
+    if d is None:
+        raise ScheduleError("NOT_FOUND", "해당 날짜 없음", 404)
+    if d.version != version:
         raise ScheduleError("VERSION_CONFLICT", "스케줄이 변경됨, 새로고침 해주세요", 409)
-
     if member_id is not None and db.get(Member, member_id) is None:
         raise ScheduleError("VALIDATION_ERROR", "존재하지 않는 멤버", 400)
 
-    other = w.night_member_id if slot == "dawn" else w.dawn_member_id
+    other = d.night_member_id if slot == "dawn" else d.dawn_member_id
     if member_id is not None and other is not None and member_id == other:
-        raise ScheduleError("VALIDATION_ERROR", "같은 주의 새벽/야간은 서로 다른 사람이어야 합니다", 400)
+        raise ScheduleError("VALIDATION_ERROR", "같은 날 새벽/야간은 서로 다른 사람이어야 합니다", 400)
 
     if slot == "dawn":
-        w.dawn_member_id = member_id
+        d.dawn_member_id = member_id
     else:
-        w.night_member_id = member_id
-    w.version += 1
+        d.night_member_id = member_id
+    d.version += 1
     db.commit()
-    return {"id": w.id, "version": w.version}
+    return {"id": d.id, "version": d.version}
 
 
-# ── 편집: 교환 (드래그앤드롭) ───────────────────────────────────────
-def swap(db: Session, a_week_id: int, a_slot: str, b_week_id: int, b_slot: str, a_version: int, b_version: int) -> dict:
-    wa = db.get(ScheduleWeek, a_week_id)
-    wb = db.get(ScheduleWeek, b_week_id)
-    if wa is None or wb is None:
-        raise ScheduleError("NOT_FOUND", "주차 없음", 404)
-    if wa.version != a_version or wb.version != b_version:
+# ── 편집: 교환 (드래그앤드롭) — 하루 단위 ───────────────────────────
+def swap(db: Session, a_day_id: int, a_slot: str, b_day_id: int, b_slot: str, a_version: int, b_version: int) -> dict:
+    da = db.get(ScheduleDay, a_day_id)
+    db_ = db.get(ScheduleDay, b_day_id)
+    if da is None or db_ is None:
+        raise ScheduleError("NOT_FOUND", "해당 날짜 없음", 404)
+    if da.version != a_version or db_.version != b_version:
         raise ScheduleError("VERSION_CONFLICT", "스케줄이 변경됨, 새로고침 해주세요", 409)
 
-    def get_slot(w, slot):
-        return w.dawn_member_id if slot == "dawn" else w.night_member_id
+    def get_slot(x, slot):
+        return x.dawn_member_id if slot == "dawn" else x.night_member_id
 
-    def set_slot(w, slot, mid):
+    def set_slot(x, slot, mid):
         if slot == "dawn":
-            w.dawn_member_id = mid
+            x.dawn_member_id = mid
         else:
-            w.night_member_id = mid
+            x.night_member_id = mid
 
-    ma = get_slot(wa, a_slot)
-    mb = get_slot(wb, b_slot)
-    set_slot(wa, a_slot, mb)
-    set_slot(wb, b_slot, ma)
+    ma, mb = get_slot(da, a_slot), get_slot(db_, b_slot)
+    set_slot(da, a_slot, mb)
+    set_slot(db_, b_slot, ma)
 
-    # 같은 주 내 새벽=야간 위반 검사
-    for w in {wa, wb}:
-        if w.dawn_member_id is not None and w.dawn_member_id == w.night_member_id:
-            raise ScheduleError("VALIDATION_ERROR", "교환 결과 같은 주에 새벽/야간이 동일해집니다", 400)
+    for x in {da, db_}:
+        if x.dawn_member_id is not None and x.dawn_member_id == x.night_member_id:
+            raise ScheduleError("VALIDATION_ERROR", "교환 결과 같은 날 새벽/야간이 동일해집니다", 400)
 
-    wa.version += 1
-    if wb is not wa:
-        wb.version += 1
+    da.version += 1
+    if db_ is not da:
+        db_.version += 1
     db.commit()
     return {"swapped": True}
 
 
-# ── 내보내기 ────────────────────────────────────────────────────────
+# ── 내보내기 (일 단위) ──────────────────────────────────────────────
 def export_xlsx(db: Session) -> bytes:
     from openpyxl import Workbook
 
-    weeks = list_weeks(db)
+    days = list_days(db)
+    dow = ["월", "화", "수", "목", "금", "토", "일"]
     wb = Workbook()
     ws = wb.active
     ws.title = "당직표"
-    ws.append(["주 시작일", "ISO주차", "새벽근무", "야간근무", "당직 평일수"])
-    for w in weeks:
+    ws.append(["날짜", "요일", "새벽근무", "야간근무"])
+    for d in days:
         ws.append([
-            w["week_start"].isoformat(),
-            f"{w['iso_year']}-W{w['iso_week']:02d}",
-            w["dawn"]["member_name"] or "",
-            w["night"]["member_name"] or "",
-            len(w["workdays"]),
+            d["date"].isoformat(),
+            dow[d["date"].weekday()],
+            d["dawn"]["member_name"] or "",
+            d["night"]["member_name"] or "",
         ])
     buf = io.BytesIO()
     wb.save(buf)

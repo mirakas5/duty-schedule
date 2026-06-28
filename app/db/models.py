@@ -58,35 +58,35 @@ class SchedulePeriod(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    weeks: Mapped[list["ScheduleWeek"]] = relationship(
+    days: Mapped[list["ScheduleDay"]] = relationship(
         back_populates="period", cascade="all, delete-orphan"
     )
 
 
-class ScheduleWeek(Base):
-    """주 단위 배정(그 주 평일 전체에 동일 적용)."""
-    __tablename__ = "schedule_weeks"
+class ScheduleDay(Base):
+    """일(日) 단위 배정. 자동 생성은 주 단위로 같은 사람을 그 주 평일 전체에 채우지만,
+    저장·편집은 하루 단위 → 드래그/수정이 하루만 바뀐다."""
+    __tablename__ = "schedule_days"
     __table_args__ = (
-        UniqueConstraint("period_id", "week_start", name="uq_period_weekstart"),
+        UniqueConstraint("period_id", "date", name="uq_period_date"),
         CheckConstraint(
             "dawn_member_id IS NULL OR night_member_id IS NULL "
             "OR dawn_member_id <> night_member_id",
-            name="ck_dawn_ne_night",
+            name="ck_day_dawn_ne_night",
         ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     period_id: Mapped[int] = mapped_column(ForeignKey("schedule_periods.id"), nullable=False, index=True)
-    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     iso_year: Mapped[int] = mapped_column(Integer, nullable=False)
     iso_week: Mapped[int] = mapped_column(Integer, nullable=False)
-    workdays_json: Mapped[str] = mapped_column(String, nullable=False, default="[]")
     dawn_member_id: Mapped[Optional[int]] = mapped_column(ForeignKey("members.id"), nullable=True)
     night_member_id: Mapped[Optional[int]] = mapped_column(ForeignKey("members.id"), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    period: Mapped["SchedulePeriod"] = relationship(back_populates="weeks")
+    period: Mapped["SchedulePeriod"] = relationship(back_populates="days")
     dawn_member: Mapped[Optional["Member"]] = relationship(foreign_keys=[dawn_member_id])
     night_member: Mapped[Optional["Member"]] = relationship(foreign_keys=[night_member_id])
