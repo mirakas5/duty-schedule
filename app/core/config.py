@@ -19,7 +19,8 @@ def _load_dotenv(path: Path) -> None:
     """
     if not path.exists():
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    # errors="ignore": .env를 메모장에서 ANSI(cp949)로 저장해도 키=값(ASCII)은 살아남게
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -64,7 +65,8 @@ class Settings:
         if not db_path.is_absolute():
             db_path = ROOT / db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite:///{db_path}"
+        # as_posix(): Windows에서도 forward-slash 경로로 (sqlite:///C:/... 안전)
+        return f"sqlite:///{db_path.as_posix()}"
 
 
 settings = Settings()
