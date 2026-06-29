@@ -1,4 +1,5 @@
-# 폐쇄망 Windows 오프라인 설치용 (uvicorn은 [standard] 아님 — uvloop/httptools 불필요)
+# Offline install for closed-network Windows. Plain uvicorn (no [standard]).
+# Keep this file ASCII-only: pip reads it with the system codepage (cp949 on Korean Windows).
 fastapi==0.115.0
 uvicorn==0.30.6
 sqlalchemy==2.0.35
