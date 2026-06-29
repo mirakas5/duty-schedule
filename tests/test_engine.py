@@ -28,7 +28,7 @@ def test_total_count_diff_within_one(n, weeks):
 # 2) 간격 공정성: 간격 표준편차가 작아야 함 --------------------------
 def test_gap_uniformity():
     members = make_members(10)
-    res = assign(members, 52)
+    res = assign(members, 52, seed=42)
     stats = fairness_stats(members, res)
     # 10명·52주 → 각자 약 10~11회, 평균 간격 ~5주. 표준편차가 과도하지 않아야 함.
     assert stats["gap"]["stdev"] <= 1.5, stats["gap"]
@@ -37,7 +37,7 @@ def test_gap_uniformity():
 def test_gap_no_immediate_repeat_when_enough_members():
     """멤버가 충분하면(>=3) 같은 사람이 연속 주에 다시 배정되지 않아야 한다."""
     members = make_members(6)
-    res = assign(members, 52)
+    res = assign(members, 52, seed=7)
     last_idx = {}
     for a in res:
         for m in (a.dawn, a.night):
@@ -62,14 +62,31 @@ def test_dawn_and_night_are_different():
         assert a.dawn.id != a.night.id
 
 
-# 4) 결정성 ------------------------------------------------------------
-def test_deterministic():
-    m1 = make_members(7)
-    m2 = make_members(7)
-    r1 = assign(m1, 52)
-    r2 = assign(m2, 52)
+# 4) 시드 재현성 / 랜덤성 ----------------------------------------------
+def test_same_seed_reproducible():
+    """같은 시드 → 동일 결과 (감사/재현 가능)."""
+    r1 = assign(make_members(7), 52, seed=123)
+    r2 = assign(make_members(7), 52, seed=123)
     assert [(a.week_index, a.dawn.id, a.night.id) for a in r1] == \
            [(a.week_index, a.dawn.id, a.night.id) for a in r2]
+
+
+def test_different_seed_changes_order():
+    """다른 시드 → 첫 주 배정 순서가 달라진다 (엑셀 순서 고정 방지)."""
+    first = set()
+    for s in range(20):
+        r = assign(make_members(8), 52, seed=s)
+        first.add((r[0].dawn.id, r[0].night.id))
+    # 20개 시드 중 첫 주 조합이 최소 2종류 이상이면 랜덤이 동작하는 것
+    assert len(first) >= 2
+
+
+def test_total_diff_holds_regardless_of_seed():
+    """시드와 무관하게 총량 편차 ≤ 1 (공정성 보장 불변)."""
+    for s in range(10):
+        members = make_members(7)
+        res = assign(members, 52, seed=s)
+        assert fairness_stats(members, res)["total"]["diff"] <= 1
 
 
 # 5) 검증 에러 ---------------------------------------------------------
@@ -128,7 +145,7 @@ def test_incremental_generation_keeps_cumulative_fairness():
 # 6) 슬롯 균형: 새벽/야간 횟수도 어느 정도 균등 -----------------------
 def test_slot_balance_reasonable():
     members = make_members(6)
-    res = assign(members, 60)
+    res = assign(members, 60, seed=5)
     stats = fairness_stats(members, res)
     for mid, info in stats["per_member"].items():
         # 개인의 새벽/야간 횟수 차이가 과도하지 않아야 함

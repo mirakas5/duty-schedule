@@ -202,7 +202,7 @@ for week_idx, week in enumerate(weeks):
 - 총량 균등(FR-05): 종료 시 total 편차 ≤ 1 (N≥2, 주차 충분 시)
 - 간격 균일(FR-05b): last_idx 최오래 멤버 우선 → 간격 분산 최소
 - 서로 다른 사람(FR-04): night는 dawn 제외 후보
-- 결정성: deterministic 타이브레이크 → 같은 입력 = 같은 결과(재현성)
+- 동점 순서: 랜덤(시드) → 자동생성마다 순서 다름, 시드 지정 시 재현. 공정성은 점수가 결정하므로 불변
 - 엣지: 평일 0인 주 제외, 멤버<2 생성 거부
 
 > **수동 편집의 형평성**: 드래그 교환은 두 셀의 member를 맞바꿔 총 횟수 보존(공정성 유지). 우클릭 수정/삭제는 총량을 바꿀 수 있어, 통계 화면에서 편차를 항상 표시해 사용자가 인지하도록 한다.
@@ -392,7 +392,7 @@ for week_idx, week in enumerate(weeks):
 | 1 | `engine.assign` | N명·52주 | total 편차 ≤ 1 |
 | 2 | `engine.assign` | 간격 통계 | 간격 표준편차 ≤ 기준치 |
 | 3 | `engine.assign` | 새벽≠야간 | 모든 주 두 멤버 다름 |
-| 4 | `engine.assign` | 결정성 | 같은 입력 2회 동일 결과 |
+| 4 | `engine.assign` | 시드 재현/랜덤 | 같은 시드 동일, 다른 시드 순서 변화, 시드 무관 편차≤1 |
 | 5 | `engine.assign` | 멤버 1명 | 검증 에러 |
 | 6 | `calendar.workdays` | 공휴일 제외 | 주말·공휴일 미포함, 공휴일 주 4일 |
 | 7 | `calendar.weeks` | 부분 주 | 첫 주 부분 평일도 1배정 |
