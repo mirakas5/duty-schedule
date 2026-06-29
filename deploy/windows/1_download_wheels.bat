@@ -8,16 +8,27 @@ REM ============================================================
 setlocal
 cd /d "%~dp0"
 
-echo [1/2] Python 확인...
-python --version || (echo Python이 없습니다. 먼저 설치하세요. & pause & exit /b 1)
+REM Python 탐지 (python 또는 py 런처)
+set "PY="
+python --version >nul 2>&1 && set "PY=python"
+if not defined PY ( py --version >nul 2>&1 && set "PY=py" )
+if not defined PY (
+  echo [오류] Python을 찾을 수 없습니다.
+  echo   1] python.org 에서 Python 3.12 설치 - 첫 화면 'Add python.exe to PATH' 체크
+  echo   2] 설치 후 이 창을 닫고 '새' 명령창에서 다시 실행
+  pause
+  exit /b 1
+)
+echo 사용할 Python:
+%PY% --version
 
-echo [2/2] wheel 다운로드 중...  (wheels 폴더에 저장)
-python -m pip download -r requirements-offline.txt -d wheels
-if errorlevel 1 (echo 다운로드 실패 & pause & exit /b 1)
+echo wheel 다운로드 중... wheels 폴더에 저장
+%PY% -m pip download -r requirements-offline.txt -d wheels
+if errorlevel 1 ( echo 다운로드 실패 & pause & exit /b 1 )
 
 echo.
-echo 완료! 아래 두 가지를 USB에 함께 담아 서버 PC로 옮기세요:
-echo   1) 이 프로젝트 폴더 전체 (work_schedule)
-echo   2) Python 설치 파일 python-3.x.x-amd64.exe  (python.org에서 다운로드)
+echo 완료! 아래를 USB에 함께 담아 서버 PC로 옮기세요:
+echo   1] 이 프로젝트 폴더 전체 - wheels 폴더 포함
+echo   2] Python 설치 파일 python-3.12.x-amd64.exe
 echo.
 pause
