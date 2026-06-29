@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ============================================================
 REM  [인터넷 되는 Windows PC에서 실행]
 REM  서버에 옮길 Python 패키지(wheel)를 wheels 폴더에 모읍니다.
